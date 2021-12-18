@@ -10,7 +10,7 @@ from flask_login import LoginManager, current_user, login_user, logout_user, log
 from flask_wtf import FlaskForm, form
 from sqlalchemy.sql.elements import Null
 from sqlalchemy.sql.expression import null, text
-from wtforms import StringField, PasswordField, IntegerField, FormField, RadioField
+from wtforms import StringField, PasswordField, IntegerField, FormField, RadioField, validators
 from wtforms.validators import InputRequired, Email, Length, Optional
 from sqlalchemy import create_engine
 from Palestra import app
@@ -19,17 +19,16 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from . import db
 import re
 import numpy
+#importa va variabile per il database dal file __init__.py
+from .__init__ import DB_URI
 #costanti utili
 nome_giorni_della_settimana=["Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato","Domenica"]
 RUOLI = ["adminDB", "capo", "istruttore", "iscritto" ]
 mesi=["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"]
 
 
-#psycopg2 è il driver che si usa per comunicare col database
-
-#DB_URI = "postgresql+psycopg2://postgres:passwordsupersegreta@localhost:5432/Palestra"
-DB_URI = "postgresql+psycopg2://postgres:a@localhost:5432/PalestraSeria"
 engine = create_engine(DB_URI)
+
 
 #inizializza la libreria che gestisce i login
 login_manager = LoginManager()
@@ -56,16 +55,16 @@ class LoginForm(FlaskForm):
 
 #stessa cosa di quello sopra, ma per la registrazione
 class RegistrazioneForm(FlaskForm):
-    codice_fiscale = StringField('Codice fiscale', validators = [InputRequired(), Length(min = 11, max = 16)])
+    codice_fiscale = StringField('Codice fiscale', validators = [InputRequired(), Length(min = 2, max = 50)])
     nome = StringField('Nome', validators = [InputRequired(), Length(min = 3, max = 50)])
     cognome = StringField('Cognome', validators = [InputRequired(), Length(min = 3, max = 50)])
     #la data dell'iscrizione la prendiamo al momento della registrazione    
     email = StringField('Email', validators = [InputRequired(), Email(message = 'Email non valida'), Length(max = 50)])
-    password = PasswordField('Password', validators = [InputRequired(), Length(min = 8, max = 50)])
+    password = PasswordField('Password', validators = [InputRequired(), Length(min = 1, max = 50)])
     #mettiamo il conferma password? Boh, intanto c'è, poi al massimo lo eliminiamo
     #chk_password = PasswordField('conferma password', validators = [InputRequired(), Length(min = 8, max = 50)])
     #le opzioni di contatto 
-    telefono = StringField('Telefono', validators = [InputRequired(), Length(min = 9, max = 11)])
+    telefono = StringField('Telefono', validators = [InputRequired(), Length(max=11)])
     residenza = StringField('Luogo di residenza', validators = [InputRequired()])
     citta = StringField('Città di residenza', validators = [InputRequired()])
 
@@ -73,10 +72,13 @@ class RegistrazioneForm(FlaskForm):
 @app.route('/')
 @app.route('/home')
 def home():
+    
     #TODO:DA FAREEEEEEEEEEEEEEEEEEEEE
     with engine.connect() as conn:
         
         totale_lezioni_svolte_al_mese = text("SELECT COUNT(*) AS numcorsi, CAST(date_part('month',data)as int) AS meseint  FROM sale_corsi  GROUP BY date_part('month',data) ")
+        tipologie_corsi_query = text("SELECT distinct (nome_tipologia), descrizione FROM tipologie_corsi ")
+        lista_tipologie_corsi = conn.execute(tipologie_corsi_query)
         
         #creo delle copie ed agisco su di esse xk il cursore scarica la tabella
         tab_totale_lezioni_svolte_al_mese = conn.execute(totale_lezioni_svolte_al_mese)
@@ -94,29 +96,25 @@ def home():
 
 
         #affluenza media x ogni giorno della settimana
-        if almeno_una_settimana_nelle_policy():
+        #if almeno_una_settimana_nelle_policy():
             
-            cont_giorno_settimana  = contaGiorni()
-            print(cont_giorno_settimana)
-            s = text("SELECT * FROM vista_prenotazioni_settimana")
-            num_prenotazioni_per_giorno_settimana = conn.execute(s)
-            arr_medie = [0,0,0,0,0,0,0]
-            #calcolo le medie
-            for row in num_prenotazioni_per_giorno_settimana:
-                for i in range(0,len(arr_medie)):
-                    if cont_giorno_settimana[i] != 0 :
-                        arr_medie[i] = int(row[nome_giorni_della_settimana[i].lower()]) / cont_giorno_settimana[i]
-                    else:
-                        arr_medie[i] = 0
-                print(arr_medie)
-
-
-
-
+        cont_giorno_settimana  = contaGiorni()
+        print(cont_giorno_settimana)
+        s = text("SELECT * FROM vista_prenotazioni_settimana")
+        num_prenotazioni_per_giorno_settimana = conn.execute(s)
+        arr_medie = [0,0,0,0,0,0,0]
+        #calcolo le medie
+        for row in num_prenotazioni_per_giorno_settimana:
+            for i in range(0,len(arr_medie)):
+                if cont_giorno_settimana[i] != 0 :
+                    arr_medie[i] = int(row[nome_giorni_della_settimana[i].lower()]) / cont_giorno_settimana[i]
+                else:
+                    arr_medie[i] = 0
+            print(arr_medie)
 
     return render_template(
         'home.html',
-        title='Home Page', nome_mesi = mesi, lezioni_al_mese = tab_totale_lezioni_svolte_al_mese, mesi_con_piu_corsi = mesi_con_max_corsi ,num_corsi =  max_corsi, medie = arr_medie , nome_giorni_della_settimana = nome_giorni_della_settimana
+        title='Home Page', nome_mesi = mesi, lezioni_al_mese = tab_totale_lezioni_svolte_al_mese, mesi_con_piu_corsi = mesi_con_max_corsi ,num_corsi =  max_corsi, medie = arr_medie , nome_giorni_della_settimana = nome_giorni_della_settimana, lista_tipologie_corsi = lista_tipologie_corsi
     )
 
 
@@ -136,6 +134,8 @@ def login():
             #se tutto va bene, effettua il login, aggiungendo l'utente
             #alla sessione e riportandolo alla schermata profilo
             login_user(utente)
+            if ema== "admin@gmail.com" and pwd == "admin":
+                return redirect(url_for('admin'))
             return redirect(url_for('profilo'))
         #else
         flash('Email o Password errati')
@@ -208,16 +208,19 @@ def registrazione():
     return render_template('registrazione.html', title = 'registrazione', form = form)
 
 
-@login_required
+
 @app.route('/profilo', methods = ['POST','GET'])
+@login_required
 def profilo():
     flash("Ecco il tuo profilo!")
     #prendo l'id dell'utente corrente e le sue info
     if current_user != None:
         id = Persone.get_id(current_user)
         ruolo =RUOLI[Persone.get_role(current_user)]
-        dati_utente_corrente = Persone.query.join(InfoContatti,Persone.codice_fiscale == InfoContatti.codice_fiscale).filter_by(codice_fiscale = id).first()
+        dati_utente_corrente = Persone.query.join(InfoContatti,Persone.codice_fiscale == InfoContatti.codice_fiscale)\
+                                .add_columns(Persone.codice_fiscale,InfoContatti.telefono, Persone.email , Persone.cognome, Persone.nome, Persone.data_iscrizione).filter_by(codice_fiscale = id).first()
         print(ruolo)
+        
         if ruolo == "istruttore" or ruolo == "iscritto": #se è istruttore o iscritto
  
             if "prenotaCorso" in request.form and request.form['prenotaCorso'] == "Prenotati":
@@ -340,13 +343,15 @@ def profilo():
    
 
 
-@login_required
+
 @app.route('/logout')
+@login_required
 def logout():
     #elimina dalla sessione l'utente attuale
     logout_user()
     return redirect('/home')
 
+@login_required
 @app.route('/corsi', methods = ['POST', 'GET'])
 def corsi():
     
@@ -408,6 +413,9 @@ def corsi():
                 
                 input_ora_inizio = request.form['ora_iniziale_ricerca']
                 input_ora_fine = request.form['ora_finale_ricerca']
+                if input_ora_inizio == '' or  input_ora_fine == '':
+                        flash("riempire i campi")
+                        return  render_template( 'corsi.html',title='Corsi Disponibili', data = data, ruolo = ruolo)
 
 
                 if ruolo == 'capo':
@@ -486,8 +494,8 @@ def corsi():
     else: 
         return redirect(url_for("home"))
 
-
 @app.route('/istruttori')
+@login_required
 def istruttori():
     with engine.connect() as conn:
         q = text("SELECT p.nome,p.cognome,i.telefono  FROM persone p  JOIN info_contatti i ON p.codice_fiscale=i.codice_fiscale WHERE p.ruolo=2")
@@ -497,6 +505,7 @@ def istruttori():
 
 
 @app.route('/creazionePalestra',methods=['POST', 'GET'])
+@login_required
 def creazionePalestra():
     tipologie_presenti = []
     """pagina della creazione della palestra"""
@@ -559,6 +568,7 @@ def creazionePalestra():
 
 
 @app.route('/calendario', methods=['POST', 'GET'])
+@login_required
 def calendario():
     #calendario
     if current_user != None:
@@ -600,6 +610,7 @@ def calendario():
 
 
 @app.route('/admin', methods=['POST', 'GET'])
+@login_required
 def admin():
     if request.method == 'POST':
         nome = request.form['nome']
@@ -648,6 +659,7 @@ class CreaSalaForm(FlaskForm):
 
 
 @app.route('/crea_sala', methods=['POST', 'GET'])
+@login_required
 def crea_sala():
    
     if  "Submit" not in request.form :
@@ -674,7 +686,9 @@ def crea_sala():
 
     return render_template("creazioneSala.html", title = "Crea una nuova sala nella tua palestra", form = form, id_sala = id_next_sala)
 
+
 @app.route('/policy_occupazione', methods=['POST', 'GET'])
+@login_required
 def policy_occupazione():
 
 
@@ -733,6 +747,7 @@ def policy_occupazione():
 
 
 @app.route('/corsi/lista',  methods=['POST', 'GET'])
+@login_required
 def lista_corsi():
 
     #----------------------------------------------------DA FAREEEEE
@@ -828,7 +843,7 @@ def contaGiorni():
             
     return num_gs
 
-
+#questa funzione forse è da eliminare
 def almeno_una_settimana_nelle_policy():
     with engine.connect() as conn:
         s = text("SELECT * FROM policy_occupazione")
@@ -850,4 +865,6 @@ def palestra_gia_creata():
                 return True
             else:
                 return False
+
+
 
